@@ -38,8 +38,6 @@ inference_config = {"temperature": temperature}
 additional_model_fields = {"top_k": top_k}
 
 
-
-
 async def get_chat_history(chat_id):
     response = table.query(
         KeyConditionExpression='chat_id = :chat_id',
@@ -122,9 +120,6 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def lambda_handler(event, context):
     return asyncio.get_event_loop().run_until_complete(main(event, context))
 
-
-
-
 async def main(event, context):
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
@@ -148,6 +143,3 @@ async def main(event, context):
             'statusCode': 500,
             'body': 'Failure'
         }
-    
-   
-
