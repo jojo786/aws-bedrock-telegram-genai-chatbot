@@ -35,11 +35,11 @@ Resources:
       Policies:
         - CloudWatchLambdaInsightsExecutionRolePolicy
         - Statement:
-            - Effect: "Allow"
+            - Effect: Allow
               Action:
-              - ssm:GetParameter
+                - ssm:GetParameter
               Resource:
-              - 'arn:aws:ssm:*:*:parameter/bedrock-telegram-genai-chatbot/*'
+                - arn:aws:ssm:*:*:parameter/bedrock-telegram-genai-chatbot/*
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
