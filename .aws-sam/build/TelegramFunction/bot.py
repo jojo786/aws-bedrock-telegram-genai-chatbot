@@ -114,7 +114,7 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
     
     messages.append(message)
-    print(messages)
+    #print(messages)
 
     # Call Bedrock Converse API
     response = bedrock.converse(
@@ -130,12 +130,17 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Parse response - response is already a dictionary
     bedrock_response = response['output']['message']['content'][0]['text']
+    bedrock_response_metrics = response['metrics']['latencyMs']
+    bedrock_response_usage = response['usage']
 
     # Save bedrock response
     await save_message(chat_id, 'assistant', bedrock_response)
 
     # Send response to telegram
     await context.bot.send_message(chat_id=update.effective_chat.id, text=bedrock_response)
+
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Response time: {bedrock_response_metrics} ms")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Usage: {bedrock_response_usage}")
 
 def lambda_handler(event, context):
     return asyncio.get_event_loop().run_until_complete(main(event, context))
@@ -144,13 +149,12 @@ async def main(event, context):
     # Create bot handler with Lambda context
     bot_handler = BotHandler(context)
 
+    # Register command handler with the instance method that has access to lambda_context
+    application.add_handler(CommandHandler('status', bot_handler.status_command))
+
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
 
-     # Register command handler with the instance method that has access to lambda_context
-    application.add_handler(CommandHandler('status', bot_handler.status_command))
-    
-    
     bedrock_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse)
     application.add_handler(bedrock_handler)
     
