@@ -6,6 +6,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 from datetime import datetime, timedelta
 import os
 from aws_lambda_powertools.utilities import parameters
+import time
 
 # Initialize SSM client
 ssm = boto3.client('ssm')
@@ -37,6 +38,24 @@ inference_config = {"temperature": temperature}
 # Additional inference parameters to use.
 additional_model_fields = {"top_k": top_k}
 
+class BotHandler:
+    def __init__(self, lambda_context):
+        self.lambda_context = lambda_context
+        self.start_time = time.perf_counter()  # More precise timing
+
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        current_time = time.perf_counter()
+        execution_duration = current_time - self.start_time
+        remaining_time = self.lambda_context.get_remaining_time_in_millis() / 1000  # Convert ms to seconds
+        function_version = self.lambda_context.function_version
+        
+        await update.message.reply_text(
+            f"Bot is running!\n"
+            f"Function version: {function_version}\n"
+            f"Execution duration: {execution_duration} seconds\n"
+            f"Remaining time until timeout: {remaining_time:.3f} seconds"
+        )
+
 
 async def get_chat_history(chat_id):
     response = table.query(
@@ -61,8 +80,10 @@ async def save_message(chat_id, role, content):
         'expireat': ttl  # TTL attribute
     })
 
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a bot running on AWS Serverless, please talk to me!")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a GenAI chatbot running on AWS Serverless, please talk to me!")
 
 async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messages = []
@@ -106,7 +127,6 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(response)
     # Parse response
     #response_body = json.loads(response['output'].read())
-    #bedrock_response = response_body['content'][0]['text']
     
     # Parse response - response is already a dictionary
     bedrock_response = response['output']['message']['content'][0]['text']
@@ -121,8 +141,15 @@ def lambda_handler(event, context):
     return asyncio.get_event_loop().run_until_complete(main(event, context))
 
 async def main(event, context):
+    # Create bot handler with Lambda context
+    bot_handler = BotHandler(context)
+
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
+
+     # Register command handler with the instance method that has access to lambda_context
+    application.add_handler(CommandHandler('status', bot_handler.status_command))
+    
     
     bedrock_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse)
     application.add_handler(bedrock_handler)

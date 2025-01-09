@@ -2,8 +2,12 @@
 
 [sync_state]
 dependency_layer = true
-latest_infra_sync_time = "2025-01-05T11:27:35.439850"
+latest_infra_sync_time = "2025-01-09T08:31:09.013078"
 
 [resource_sync_states."AutoDependencyLayerParentSyncFlow:TelegramFunction"]
-hash = "d306b9501435ad5a4b842d958655cffdcd8995a8e0fc2b258abcaebc9b0fd8c5"
-sync_time = "2025-01-08T09:40:46.917366"
+hash = "90829454bd375ed3b61fbd485914330513d1a3fcbc1278f3749bcbd7e239e5bf"
+sync_time = "2025-01-09T08:47:53.026648"
+
+[resource_sync_states."AliasVersionSyncFlow:TelegramFunction:SnapStart"]
+hash = "6f4b6612125fb3a0daecd2799dfd6c9c299424fd920f9b308110a2c1fbd8f443"
+sync_time = "2025-01-09T08:47:55.565832"

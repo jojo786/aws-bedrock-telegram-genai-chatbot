@@ -5,7 +5,7 @@ codeuri = "/Users/yusmayet/gitwork/ptb/aws-bedrock-telegram-genai-chatbot/src/Fu
 runtime = "python3.13"
 architecture = "arm64"
 handler = "bot.lambda_handler"
-manifest_hash = ""
+manifest_hash = "493f74ff3d5a680b2ba5713c3f37338c"
 packagetype = "Zip"
 functions = ["TelegramFunction"]
 
