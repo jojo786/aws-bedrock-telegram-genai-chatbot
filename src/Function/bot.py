@@ -137,10 +137,10 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_message(chat_id, 'assistant', bedrock_response)
 
     # Send response to telegram
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=bedrock_response)
+    ptb_response_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=bedrock_response)
 
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Response time: {bedrock_response_metrics} ms")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Usage: {bedrock_response_usage}")
+    await context.bot.send_message(chat_id=update.effective_chat.id, reply_to_message_id=ptb_response_message.message_id, text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}") 
+    #await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Usage: {bedrock_response_usage}")
 
 def lambda_handler(event, context):
     return asyncio.get_event_loop().run_until_complete(main(event, context))
