@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import os
 from aws_lambda_powertools.utilities import parameters
 import time
+import re
 
 # Initialize SSM client
 ssm = boto3.client('ssm')
@@ -142,6 +143,158 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, reply_to_message_id=ptb_response_message.message_id, text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}") 
     #await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Usage: {bedrock_response_usage}")
 
+def sanitize_filename(filename):
+    # Remove file extension first
+    base_name = os.path.splitext(filename)[0]
+    
+    # Replace invalid characters with spaces
+    # Keep only alphanumeric, spaces, hyphens, parentheses, and square brackets
+    sanitized = re.sub(r'[^a-zA-Z0-9\s\-\(\)\[\]]', ' ', base_name)
+    
+    # Replace multiple spaces with single space
+    sanitized = re.sub(r'\s+', ' ', sanitized)
+    
+    # Trim spaces from start and end
+    sanitized = sanitized.strip()
+    
+    return sanitized
+
+
+async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("Start processing document: ")
+    
+    chat_id = update.effective_chat.id
+    document = update.effective_message.document
+    mime_type = document.mime_type
+    file_name = document.file_name
+    file_size = document.file_size  # Size in bytes
+    
+    # Define size limit (4.5MB in bytes)
+    SIZE_LIMIT = 4.5 * 1024 * 1024  # 4.5MB in bytes
+    
+    # Check file size
+    if file_size > SIZE_LIMIT:
+        size_mb = file_size / (1024 * 1024)  # Convert to MB for user-friendly message
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"File is too large ({size_mb:.2f}MB). Maximum allowed size is 4.5MB. Please upload a smaller file."
+        )
+        return
+    
+    # Log document details
+    print(f"File name: {file_name}")
+    print(f"MIME type: {mime_type}")
+    print(f"File size: {file_size / (1024 * 1024):.2f}MB")
+    
+
+    
+    # Define supported document types
+    supported_types = {
+        'application/pdf': {
+            'extension': '.pdf',
+            'type': 'PDF'
+        },
+        'application/msword': {
+            'extension': '.doc',
+            'type': 'DOC'
+        },
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {
+            'extension': '.docx',
+            'type': 'DOCX'
+        },
+        'text/plain': {
+            'extension': '.txt',
+            'type': 'TXT'
+        }
+    }
+    
+    # Check if document type is supported
+    if mime_type not in supported_types:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="Sorry, this file type is not supported. Please upload a PDF, DOC, DOCX, or TXT file."
+        )
+        return
+    
+    try:
+        # Get the file
+        file = await context.bot.getFile(document.file_id)
+        file_type = supported_types[mime_type]
+        temp_file_path = f'/tmp/doc{file_type["extension"]}'
+        
+        # Download the file
+        await file.download_to_drive(temp_file_path)
+        
+        # Read the file contents
+        with open(temp_file_path, 'rb') as doc:
+            doc_contents = doc.read()
+        
+        print(f"Successfully saved document as {file_type['type']}")
+
+                # Sanitize the filename for Bedrock
+        sanitized_name = sanitize_filename(file_name)
+        print(f"Sanitized filename: {sanitized_name}")
+        
+        # Ensure we have a valid filename after sanitization
+        if not sanitized_name:
+            sanitized_name = "document"
+
+        
+        # Prepare messages for Bedrock Converse API
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": f"Please analyze this document"
+                    },
+                    {
+                        "document": {
+                            "format": file_type['extension'].lstrip('.'),
+                            "name": sanitized_name,
+                            "source": {
+                                "bytes": doc_contents
+                            }
+                        }
+                    }
+                ]
+            }
+        ]
+
+        # Use the converse API with direct parameters
+        response = bedrock.converse(
+            modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+            messages=messages
+        )
+        
+        # Extract the text from the response
+        bedrock_response = response['output']['message']['content'][0]['text']
+        bedrock_response_metrics = response['metrics']['latencyMs']
+        bedrock_response_usage = response['usage']
+
+        # Send response to telegram
+        ptb_response_message = await context.bot.send_message(
+            chat_id=chat_id, 
+            text=bedrock_response
+        )
+
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            reply_to_message_id=ptb_response_message.message_id, 
+            text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}"
+        )
+        
+    except Exception as e:
+        error_message = f"Error processing document: {str(e)}"
+        print(error_message)
+        await context.bot.send_message(chat_id=chat_id, text=error_message)
+    
+    finally:
+        # Cleanup: Remove temporary file if it exists
+        if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+
 def lambda_handler(event, context):
     return asyncio.get_event_loop().run_until_complete(main(event, context))
 
@@ -158,6 +311,23 @@ async def main(event, context):
     bedrock_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse)
     application.add_handler(bedrock_handler)
     
+    # Add these handlers to catch different document types
+    application.add_handler(MessageHandler(
+        filters.Document.PDF |
+        filters.Document.DOC |
+        filters.Document.DOCX |
+        filters.Document.TXT,
+        document_handler
+    ))
+    application.add_handler(MessageHandler(
+        filters.Document.MimeType("application/pdf") |
+        filters.Document.MimeType("application/msword") |
+        filters.Document.MimeType("application/vnd.openxmlformats-officedocument.wordprocessingml.document") |
+        filters.Document.MimeType("text/plain"),
+        document_handler
+    ))
+    
+
     try:    
         await application.initialize()
         await application.process_update(
