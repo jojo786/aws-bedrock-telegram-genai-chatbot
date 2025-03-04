@@ -175,11 +175,12 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check file size
     if file_size > SIZE_LIMIT:
         size_mb = file_size / (1024 * 1024)  # Convert to MB for user-friendly message
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"File is too large ({size_mb:.2f}MB). Maximum allowed size is 4.5MB. Please upload a smaller file."
+        print("file too large")
+        # Send response to telegram
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"File is too large ({size_mb:.2f}MB). Maximum allowed size is 4.5MB. Please upload a smaller file."
         )
         return
+
     
     # Log document details
     print(f"File name: {file_name}")
@@ -210,9 +211,9 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if document type is supported
     if mime_type not in supported_types:
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            text="Sorry, this file type is not supported. Please upload a PDF, DOC, DOCX, or TXT file."
+        print("Unsupported document type")
+        # Send response to telegram
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, this file type is not supported. Please upload a PDF, DOC, DOCX, or TXT file."
         )
         return
     
