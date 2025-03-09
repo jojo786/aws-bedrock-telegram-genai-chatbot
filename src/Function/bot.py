@@ -22,6 +22,7 @@ table = dynamodb.Table(CHAT_HISTORY_TABLE)
 # Get the Telegram bot token from Parameter Store
 ssm_provider = parameters.SSMProvider()
 TelegramBotToken = ssm_provider.get('/bedrock-telegram-genai-chatbot/telegram/prod/bot_token', decrypt=True)
+TelegramBotAPISecretToken = ssm_provider.get('/bedrock-telegram-genai-chatbot/telegram/prod/api_secret_token', decrypt=True)
 
 # Initialize PTB
 application = ApplicationBuilder().token(TelegramBotToken).build()
@@ -297,6 +298,16 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def lambda_handler(event, context):
+    # Check if secret token header exists and matches expected value
+    if 'headers' not in event or \
+       'X-Telegram-Bot-Api-Secret-Token' not in event['headers'] or \
+       event['headers']['X-Telegram-Bot-Api-Secret-Token'] != TelegramBotAPISecretToken:
+        print("Unauthorized - Telegram Secret not found")
+        return {
+            'statusCode': 401,
+            'body': 'Unauthorized'
+        }
+    
     return asyncio.get_event_loop().run_until_complete(main(event, context))
 
 async def main(event, context):
