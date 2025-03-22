@@ -382,7 +382,77 @@ def lambda_handler(event, context):
     
     return asyncio.get_event_loop().run_until_complete(main(event, context))
 
-
+#clear chat history
+async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    try:
+        # First, get all items for this chat_id where record_type is CHAT_MESSAGE
+        response = table.query(
+            KeyConditionExpression='chat_id = :chat_id',
+            FilterExpression='record_type = :type',
+            ExpressionAttributeValues={
+                ':chat_id': str(chat_id),
+                ':type': 'CHAT_MESSAGE'
+            }
+        )
+        
+        items = response.get('Items', [])
+        
+        if not items:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="No chat history found to clear."
+            )
+            return
+        
+        # DynamoDB batch_write_item can only handle 25 items at a time
+        batch_size = 25
+        deleted_count = 0
+        
+        for i in range(0, len(items), batch_size):
+            batch_items = items[i:i + batch_size]
+            
+            # Prepare batch delete request
+            delete_requests = [
+                {
+                    'DeleteRequest': {
+                        'Key': {
+                            'chat_id': item['chat_id'],
+                            'timestamp': item['timestamp']
+                        }
+                    }
+                }
+                for item in batch_items
+            ]
+            
+            # Execute batch delete
+            dynamodb.batch_write_item(
+                RequestItems={
+                    CHAT_HISTORY_TABLE: delete_requests
+                }
+            )
+            
+            deleted_count += len(batch_items)
+        
+        # Send confirmation message
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Successfully cleared {deleted_count} messages from your chat history."
+        )
+        
+        # Send a follow-up message to start fresh
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="You can start a new conversation now."
+        )
+        
+    except Exception as e:
+        print(f"Error clearing chat history: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Sorry, I encountered an error while trying to clear your chat history."
+        )
 
 async def main(event, context):
     # Create bot handler with Lambda context
@@ -397,6 +467,9 @@ async def main(event, context):
 
     #Add the debug toggle command handler
     application.add_handler(CommandHandler('debug', debug_handler))
+
+    # Add the clear chat history command handler
+    application.add_handler(CommandHandler('clear', clear_command))
     
     # Add these handlers to catch different document types
     application.add_handler(MessageHandler(
