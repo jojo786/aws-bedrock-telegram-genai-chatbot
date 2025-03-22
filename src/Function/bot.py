@@ -302,7 +302,7 @@ def lambda_handler(event, context):
     if 'headers' not in event or \
        'X-Telegram-Bot-Api-Secret-Token' not in event['headers'] or \
        event['headers']['X-Telegram-Bot-Api-Secret-Token'] != TelegramBotAPISecretToken:
-        print("Unauthorized - Telegram Secret not found")
+        print("Unauthorized - Telegram API Secret Token Header not found")
         return {
             'statusCode': 401,
             'body': 'Unauthorized'
@@ -317,11 +317,12 @@ async def main(event, context):
     # Register command handler with the instance method that has access to lambda_context
     application.add_handler(CommandHandler('status', bot_handler.status_command))
 
-    start_handler = CommandHandler('start', start)
-    application.add_handler(start_handler)
+    application.add_handler(CommandHandler('start', start))
 
-    bedrock_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse)
-    application.add_handler(bedrock_handler)
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse))
+
+    # Add the debug toggle command handler
+    #application.add_handler(CommandHandler('debug', toggle_debug))
     
     # Add these handlers to catch different document types
     application.add_handler(MessageHandler(
