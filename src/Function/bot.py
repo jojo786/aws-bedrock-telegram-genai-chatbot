@@ -61,10 +61,14 @@ class BotHandler:
 
 async def get_chat_history(chat_id):
     response = table.query(
-        KeyConditionExpression='chat_id = :chat_id',
-        ExpressionAttributeValues={':chat_id': str(chat_id)},
-        ScanIndexForward=False,  # Get most recent messages first
-    )
+            KeyConditionExpression='chat_id = :chat_id',
+            FilterExpression='record_type = :type',
+            ExpressionAttributeValues={
+                ':chat_id': str(chat_id),
+                ':type': 'CHAT_MESSAGE'
+            },
+            ScanIndexForward=False  # This will get the most recent messages first
+        )
     return response.get('Items', [])
 
 async def save_message(chat_id, role, content):
@@ -77,6 +81,7 @@ async def save_message(chat_id, role, content):
     table.put_item(Item={
         'chat_id': str(chat_id),
         'timestamp': timestamp,
+        'record_type': 'CHAT_MESSAGE',  # Add record_type
         'role': role,
         'content': content,
         'expireat': ttl  # TTL attribute
@@ -141,8 +146,16 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Send response to telegram
     ptb_response_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=bedrock_response)
 
-    await context.bot.send_message(chat_id=update.effective_chat.id, reply_to_message_id=ptb_response_message.message_id, text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}") 
-    #await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Bedrock Usage: {bedrock_response_usage}")
+    # Check debug status before sending debug message
+    debug_enabled = await get_debug_status(update.effective_chat.id)
+    print(f"Checking the debug status before sending debug messages: {debug_enabled}")
+    if debug_enabled:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            reply_to_message_id=ptb_response_message.message_id, 
+            text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}"
+        )
+    
 
 def sanitize_filename(filename):
     # Remove file extension first
@@ -296,6 +309,65 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
+async def debug_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    # Get current debug status
+    current_status = await get_debug_status(chat_id)
+    
+    # Toggle the status
+    new_status = not current_status
+    
+    # Save the new status
+    if await save_debug_status(chat_id, new_status):
+        status_text = "enabled" if new_status else "disabled"
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Debug messages have been {status_text}."
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Failed to update debug settings."
+        )
+
+async def get_debug_status(chat_id):
+    try:
+        response = table.query(
+            IndexName='DebugSettingsIndex',
+            KeyConditionExpression='chat_id = :chat_id AND record_type = :type',
+            ExpressionAttributeValues={
+                ':chat_id': str(chat_id),
+                ':type': 'DEBUG_SETTINGS'
+            },
+            ScanIndexForward=False,  # Get most recent first
+            Limit=1  # We only need the most recent setting
+        )
+        items = response.get('Items', [])
+        print(f"Debug items: {items}")  # Add logging for debugging
+        return items[0].get('debug_enabled', False) if items else False
+    except Exception as e:
+        print(f"Error getting debug status: {e}")
+        return False
+
+async def save_debug_status(chat_id, status):
+    try:
+        current_time = datetime.utcnow()
+        timestamp = current_time.isoformat()
+        # Calculate TTL (current time + 1 year) in epoch seconds
+        ttl = int((current_time + timedelta(days=365)).timestamp())
+        
+        table.put_item(Item={
+            'chat_id': str(chat_id),
+            'timestamp': timestamp,
+            'record_type': 'DEBUG_SETTINGS',
+            'debug_enabled': status,
+            'expireat': ttl
+        })
+        return True
+    except Exception as e:
+        print(f"Error saving debug status: {e}")
+        return False
 
 def lambda_handler(event, context):
     # Check if secret token header exists and matches expected value
@@ -310,6 +382,8 @@ def lambda_handler(event, context):
     
     return asyncio.get_event_loop().run_until_complete(main(event, context))
 
+
+
 async def main(event, context):
     # Create bot handler with Lambda context
     bot_handler = BotHandler(context)
@@ -322,7 +396,7 @@ async def main(event, context):
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse))
 
     #Add the debug toggle command handler
-    #application.add_handler(CommandHandler('debug', toggle_debug))
+    application.add_handler(CommandHandler('debug', debug_handler))
     
     # Add these handlers to catch different document types
     application.add_handler(MessageHandler(

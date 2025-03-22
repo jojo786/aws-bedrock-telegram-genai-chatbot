@@ -69,11 +69,25 @@ Resources:
           AttributeType: S
         - AttributeName: timestamp
           AttributeType: S
+        - AttributeName: record_type
+          AttributeType: S
       KeySchema:
         - AttributeName: chat_id
           KeyType: HASH
         - AttributeName: timestamp
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: DebugSettingsIndex
+        KeySchema:
+          - AttributeName: chat_id
+            KeyType: HASH
+          - AttributeName: record_type
+            KeyType: RANGE
+        Projection:
+          ProjectionType: INCLUDE
+          NonKeyAttributes:
+            - debug_enabled
+            - expireat
       BillingMode: PAY_PER_REQUEST
       TimeToLiveSpecification:
         AttributeName: expireat
