@@ -84,8 +84,8 @@ async def save_message(chat_id, role, content):
 
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a GenAI chatbot running on AWS Serverless, please talk to me!")
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a GenAI chatbot, powered by Amazon Bedrock, running on AWS Serverless, please talk to me!")
 
 async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messages = []
@@ -317,11 +317,11 @@ async def main(event, context):
     # Register command handler with the instance method that has access to lambda_context
     application.add_handler(CommandHandler('status', bot_handler.status_command))
 
-    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('start', start_command))
 
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse))
 
-    # Add the debug toggle command handler
+    #Add the debug toggle command handler
     #application.add_handler(CommandHandler('debug', toggle_debug))
     
     # Add these handlers to catch different document types
