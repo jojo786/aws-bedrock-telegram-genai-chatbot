@@ -97,6 +97,7 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     chat_id = update.effective_chat.id
     user_message = update.message.text
+    current_time = await get_current_datetime()
     #print(user_message)
 
     # Get recent chat history
@@ -115,10 +116,13 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
         #print(conversation)
         messages.append(conversation)
 
-    message =  {
-                "role": "user", 
-                "content": [{f"text": user_message}]
-        }
+    # Add current time context to the user message
+    message = {
+        "role": "user", 
+        "content": [
+            {"text": f"Current time: {current_time}\nUser message: {user_message}"}
+        ]
+    }
     
     messages.append(message)
     #print(messages)
@@ -453,6 +457,11 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=chat_id,
             text="Sorry, I encountered an error while trying to clear your chat history."
         )
+
+async def get_current_datetime():
+    """Get current date and time in a formatted string"""
+    current = datetime.utcnow()
+    return current.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 async def main(event, context):
     # Create bot handler with Lambda context
