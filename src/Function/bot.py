@@ -297,11 +297,15 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=bedrock_response
         )
 
-        await context.bot.send_message(
-            chat_id=chat_id, 
-            reply_to_message_id=ptb_response_message.message_id, 
-            text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}"
-        )
+        # Check debug status before sending debug message
+        debug_enabled = await get_debug_status(update.effective_chat.id)
+        print(f"Checking the debug status before sending debug messages: {debug_enabled}")
+        if debug_enabled:
+            await context.bot.send_message(
+                chat_id=chat_id, 
+                reply_to_message_id=ptb_response_message.message_id, 
+                text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}"
+            )
         
     except Exception as e:
         error_message = f"Error processing document: {str(e)}"
