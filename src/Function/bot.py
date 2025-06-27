@@ -9,9 +9,10 @@ from aws_lambda_powertools.utilities import parameters
 import time
 import re
 
+
 # Initialize SSM client
 ssm = boto3.client('ssm')
-# Initialize Bedrock client
+# Initialize Bedrock client for synchronous operations
 bedrock = boto3.client('bedrock-runtime')
 # Get table name from environment variable
 CHAT_HISTORY_TABLE = os.environ['CHATHISTORY_TABLE_NAME']
@@ -27,7 +28,7 @@ TelegramBotAPISecretToken = ssm_provider.get('/bedrock-telegram-genai-chatbot/te
 # Initialize PTB
 application = ApplicationBuilder().token(TelegramBotToken).build()
 
-model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 # Inference parameters to use.
 temperature = 0.5
 top_k = 200
@@ -120,7 +121,7 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = {
         "role": "user", 
         "content": [
-            {"text": f"Current time: {current_time}\nUser message: {user_message}"}
+            {"text": f"This is the current time, but you dont need to mention it in your response unless required: {current_time}\nUser message: {user_message}"}
         ]
     }
     
