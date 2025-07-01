@@ -274,6 +274,9 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "name": sanitized_name,
                             "source": {
                                 "bytes": doc_contents
+                            },
+                            "citations": {
+                                "enabled": True
                             }
                         }
                     }
@@ -283,7 +286,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Use the converse API with direct parameters
         response = bedrock.converse(
-            modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+            modelId=model_id,
             messages=messages
         )
         
