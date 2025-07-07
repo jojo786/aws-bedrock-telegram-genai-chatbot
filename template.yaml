@@ -29,9 +29,9 @@ Resources:
       Handler: bot.lambda_handler
       MemorySize: 256
       Timeout: 30
-      AutoPublishAlias: SnapStart
-      SnapStart:
-        ApplyOn: PublishedVersions
+      #AutoPublishAlias: SnapStart
+      #SnapStart:
+      #  ApplyOn: PublishedVersions
       Policies:
         - CloudWatchLambdaInsightsExecutionRolePolicy
         - Statement:

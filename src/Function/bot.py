@@ -28,9 +28,10 @@ TelegramBotAPISecretToken = ssm_provider.get('/bedrock-telegram-genai-chatbot/te
 # Initialize PTB
 application = ApplicationBuilder().token(TelegramBotToken).build()
 
-model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+#model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+model_id = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 # Inference parameters to use.
-temperature = 0.5
+temperature = 1 #0.5
 top_k = 200
 
 # Setup the system prompts and messages to send to the model.
@@ -39,7 +40,13 @@ system_prompts = [{"text": "You are an conversational chat bot, that users are u
 # Base inference parameters to use.
 inference_config = {"temperature": temperature}
 # Additional inference parameters to use.
-additional_model_fields = {"top_k": top_k}
+additional_model_fields = {
+    #"top_k": top_k,
+    "thinking": {
+        "type": "enabled",
+        "budget_tokens": 1024
+    }
+}
 
 class BotHandler:
     def __init__(self, lambda_context):
@@ -141,7 +148,15 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     #response_body = json.loads(response['output'].read())
     
     # Parse response - response is already a dictionary
-    bedrock_response = response['output']['message']['content'][0]['text']
+    content = response['output']['message']['content']
+    
+    # Extract reasoning and text content
+    reasoning = next((item['reasoningContent']['reasoningText']['text'] for item in content if 'reasoningContent' in item), "")
+    text_response = next((item['text'] for item in content if 'text' in item), "")
+    
+    # Combine reasoning and response
+    bedrock_response = f"**Thinking:**\n{reasoning}\n\n**Response:**\n{text_response}" if reasoning else text_response
+    
     bedrock_response_metrics = response['metrics']['latencyMs']
     bedrock_response_usage = response['usage']
 
@@ -275,9 +290,9 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             "source": {
                                 "bytes": doc_contents
                             },
-                            "citations": {
-                                "enabled": True
-                            }
+                        "citations": {
+                            "enabled": True
+                        }
                         }
                     }
                 ]
@@ -287,7 +302,16 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Use the converse API with direct parameters
         response = bedrock.converse(
             modelId=model_id,
-            messages=messages
+            messages=messages,
+            additionalModelRequestFields={
+                "thinking": {
+                    "enabled": True,
+                    "type": "verbose"
+                },
+                "citations": {
+                    "enabled": True
+                }
+            }
         )
         
         # Extract the text from the response
