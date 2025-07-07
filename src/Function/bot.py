@@ -390,8 +390,8 @@ async def save_debug_status(chat_id, status):
     try:
         current_time = datetime.utcnow()
         timestamp = current_time.isoformat()
-        # Calculate TTL (current time + 1 year) in epoch seconds
-        ttl = int((current_time + timedelta(days=365)).timestamp())
+        # Calculate TTL (current time + 1 hour) in epoch seconds
+        ttl = int((current_time + timedelta(hours=1)).timestamp())
         
         table.put_item(Item={
             'chat_id': str(chat_id),
