@@ -28,6 +28,7 @@ TelegramBotAPISecretToken = ssm_provider.get('/bedrock-telegram-genai-chatbot/te
 # Initialize PTB
 application = ApplicationBuilder().token(TelegramBotToken).build()
 
+# Claude Sonnet 4.5 model configuration for AWS Bedrock
 model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 # Inference parameters to use.
 temperature = 0.5
@@ -281,10 +282,12 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         ]
 
-        # Use the converse API with direct parameters
+        # Use the converse API with consistent model configuration
         response = bedrock.converse(
-            modelId='us.anthropic.claude-3-5-sonnet-20241022-v2:0',
-            messages=messages
+            modelId=model_id,
+            messages=messages,
+            inferenceConfig=inference_config,
+            additionalModelRequestFields=additional_model_fields
         )
         
         # Extract the text from the response
