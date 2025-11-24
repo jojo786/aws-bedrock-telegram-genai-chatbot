@@ -13,7 +13,7 @@ import re
 # Initialize SSM client
 ssm = boto3.client('ssm')
 # Initialize Bedrock client for synchronous operations
-bedrock = boto3.client('bedrock-runtime')
+bedrock = boto3.client('bedrock-runtime', region_name=os.environ.get('REGION', 'af-south-1'))
 # Get table name from environment variable
 CHAT_HISTORY_TABLE = os.environ['CHATHISTORY_TABLE_NAME']
 # Initialize DynamoDB client
@@ -29,7 +29,10 @@ TelegramBotAPISecretToken = ssm_provider.get('/bedrock-telegram-genai-chatbot/te
 application = ApplicationBuilder().token(TelegramBotToken).build()
 
 #model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
-model_id = "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
+#model_id = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+#model_id = "af.anthropic.claude-sonnet-4-5-20250929-v1:0"
+model_id = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
 # Inference parameters to use.
 temperature = 1 #0.5
 top_k = 200
@@ -41,11 +44,7 @@ system_prompts = [{"text": "You are an conversational chat bot, that users are u
 inference_config = {"temperature": temperature}
 # Additional inference parameters to use.
 additional_model_fields = {
-    #"top_k": top_k,
-    "thinking": {
-        "type": "enabled",
-        "budget_tokens": 1024
-    }
+    #"top_k": top_k
 }
 
 class BotHandler:
@@ -135,13 +134,25 @@ async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messages.append(message)
     #print(messages)
 
+    # Check thinking status
+    thinking_enabled = await get_thinking_status(chat_id)
+    print(f"Checking the thinking status before sending thinking messages: {thinking_enabled}")
+    
+    # Build additional model fields based on thinking status
+    model_fields = {}
+    if thinking_enabled:
+        model_fields["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": 1024
+        }
+    
     # Call Bedrock Converse API
     response = bedrock.converse(
         modelId=model_id,
         messages=messages,
         system=system_prompts,
         inferenceConfig=inference_config,
-        additionalModelRequestFields=additional_model_fields
+        additionalModelRequestFields=model_fields
     )
     print(response)
     # Parse response
@@ -302,16 +313,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Use the converse API with direct parameters
         response = bedrock.converse(
             modelId=model_id,
-            messages=messages,
-            additionalModelRequestFields={
-                "thinking": {
-                    "enabled": True,
-                    "type": "verbose"
-                },
-                "citations": {
-                    "enabled": True
-                }
-            }
+            messages=messages
         )
         
         # Extract the text from the response
@@ -367,6 +369,28 @@ async def debug_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text="Failed to update debug settings."
         )
 
+async def thinking_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    # Get current thinking status
+    current_status = await get_thinking_status(chat_id)
+    
+    # Toggle the status
+    new_status = not current_status
+    
+    # Save the new status
+    if await save_thinking_status(chat_id, new_status):
+        status_text = "enabled" if new_status else "disabled"
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Chain of thought has been {status_text}."
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="Failed to update thinking settings."
+        )
+
 async def get_debug_status(chat_id):
     try:
         response = table.query(
@@ -403,6 +427,43 @@ async def save_debug_status(chat_id, status):
         return True
     except Exception as e:
         print(f"Error saving debug status: {e}")
+        return False
+
+async def get_thinking_status(chat_id):
+    try:
+        response = table.query(
+            IndexName='DebugSettingsIndex',
+            KeyConditionExpression='chat_id = :chat_id AND record_type = :type',
+            ExpressionAttributeValues={
+                ':chat_id': str(chat_id),
+                ':type': 'THINKING_SETTINGS'
+            },
+            ScanIndexForward=False,
+            Limit=1
+        )
+        items = response.get('Items', [])
+        print(f"Thinking items: {items}")  # Add logging for thinking
+        return items[0].get('thinking_enabled', False) if items else False
+    except Exception as e:
+        print(f"Error getting thinking status: {e}")
+        return False
+
+async def save_thinking_status(chat_id, status):
+    try:
+        current_time = datetime.utcnow()
+        timestamp = current_time.isoformat()
+        ttl = int((current_time + timedelta(hours=1)).timestamp())
+        
+        table.put_item(Item={
+            'chat_id': str(chat_id),
+            'timestamp': timestamp,
+            'record_type': 'THINKING_SETTINGS',
+            'thinking_enabled': status,
+            'expireat': ttl
+        })
+        return True
+    except Exception as e:
+        print(f"Error saving thinking status: {e}")
         return False
 
 def lambda_handler(event, context):
@@ -508,6 +569,9 @@ async def main(event, context):
 
     #Add the debug toggle command handler
     application.add_handler(CommandHandler('debug', debug_handler))
+    
+    # Add the thinking toggle command handler
+    application.add_handler(CommandHandler('thinking', thinking_handler))
 
     # Add the clear chat history command handler
     application.add_handler(CommandHandler('clear', clear_command))

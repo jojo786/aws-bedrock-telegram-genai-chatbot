@@ -11,12 +11,15 @@ Globals:
       LogGroup: !Sub /aws/lambda/${AWS::StackName}
       LogFormat: JSON
     Layers:
-      - !Sub arn:aws:lambda:${AWS::Region}:580247275435:layer:LambdaInsightsExtension-Arm64:20 #Lambda Insights Layer - Specific for us-east-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Lambda-Insights-extension-versionsARM.html
-      - !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroPython:5 #Application Signals Layer - Specific for us-east-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Signals-Enable-Lambda.html
+      #- !Sub arn:aws:lambda:${AWS::Region}:580247275435:layer:LambdaInsightsExtension-Arm64:20 #Lambda Insights Layer - Specific for us-east-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Lambda-Insights-extension-versionsARM.html
+      #- !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroPython:5 #Application Signals Layer - Specific for us-east-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Signals-Enable-Lambda.html
+      - !Sub arn:aws:lambda:${AWS::Region}:012438385374:layer:LambdaInsightsExtension-Arm64:25 #Lambda Insights Layer - Specific for af-south-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Lambda-Insights-extension-versionsARM.html
+      - !Sub arn:aws:lambda:${AWS::Region}:904233096616:layer:AWSOpenTelemetryDistroPython:13 #Application Signals Layer - Specific for af-south-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Signals-Enable-Lambda.html
     Tracing: Active
     Environment:
       Variables:
         AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+        REGION: !Ref AWS::Region
 
 Resources:
   TelegramFunction:
@@ -29,9 +32,9 @@ Resources:
       Handler: bot.lambda_handler
       MemorySize: 256
       Timeout: 30
-      AutoPublishAlias: SnapStart
-      SnapStart:
-        ApplyOn: PublishedVersions
+      #AutoPublishAlias: SnapStart
+      #SnapStart:
+      #  ApplyOn: PublishedVersions
       Policies:
         - CloudWatchLambdaInsightsExecutionRolePolicy
         - Statement:
@@ -77,17 +80,18 @@ Resources:
         - AttributeName: timestamp
           KeyType: RANGE
       GlobalSecondaryIndexes:
-      - IndexName: DebugSettingsIndex
-        KeySchema:
-          - AttributeName: chat_id
-            KeyType: HASH
-          - AttributeName: record_type
-            KeyType: RANGE
-        Projection:
-          ProjectionType: INCLUDE
-          NonKeyAttributes:
-            - debug_enabled
-            - expireat
+        - IndexName: DebugSettingsIndex
+          KeySchema:
+            - AttributeName: chat_id
+              KeyType: HASH
+            - AttributeName: record_type
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - debug_enabled
+              - thinking_enabled
+              - expireat
       BillingMode: PAY_PER_REQUEST
       TimeToLiveSpecification:
         AttributeName: expireat
@@ -95,3 +99,8 @@ Resources:
       Tags:
         - Value: aws-bedrock-telegram-genai-chatbot
           Key: app
+
+Outputs:
+  TelegramApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
