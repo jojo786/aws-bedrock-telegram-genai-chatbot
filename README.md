@@ -3,7 +3,7 @@ Telegram conversational GenAI bot, powered by Amazon Bedrock, using PTB, hosted 
 
 - Uses the [python-telegram-bot](https://pypi.org/project/python-telegram-bot/) telegram bot framework, using [this project](https://github.com/jojo786/Sample-Python-Telegram-Bot-AWS-Serverless-PTBv20) to run PTB on AWS Serverless
 - GenAI conversational capabilities powered by Amazon Bedrock, using the Claude Sonnet 4.5 LLM
-- Supports response streaming for real-time chat experience, using APIGateway Response Streaming and Lambda response streaming with FastAPI and Lambda Web Adapter 
+- Supports [response streaming](https://aws.amazon.com/blogs/compute/building-responsive-apis-with-amazon-api-gateway-response-streaming/) for real-time chat experience, using APIGateway Response Streaming and Lambda response streaming with FastAPI and Lambda Web Adapter 
 
 # Architecture
 Requests from Telegram come in via an Amazon API Gateway endpoint with response streaming enabled, which get routed to a Lambda function running FastAPI with Lambda Web Adapter. The Lambda function gets the Telegram Token and API Secret Token from SSM Parameter Store for secure authentication. Requests are sent to Amazon Bedrock with support for response streaming and chain of thought reasoning. Chat history and user settings are maintained in DynamoDB with TTL and Global Secondary Index for efficient querying. Logs are stored on CloudWatch. All deployed using AWS SAM IaC. Monitoring services like X-Ray, Lambda Insights and Application Signal are all enabled for comprehensive monitoring.
