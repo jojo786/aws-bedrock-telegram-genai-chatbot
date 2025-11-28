@@ -47,23 +47,22 @@ additional_model_fields = {
     #"top_k": top_k
 }
 
-class BotHandler:
-    def __init__(self, lambda_context):
-        self.lambda_context = lambda_context
-        self.start_time = time.perf_counter()  # More precise timing
+# Global variables for timing
+start_time = None
+lambda_context = None
 
-    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        current_time = time.perf_counter()
-        execution_duration = current_time - self.start_time
-        remaining_time = self.lambda_context.get_remaining_time_in_millis() / 1000  # Convert ms to seconds
-        function_version = self.lambda_context.function_version
-        
-        await update.message.reply_text(
-            f"Bot is running!\n"
-            f"Function version: {function_version}\n"
-            f"Execution duration: {execution_duration} seconds\n"
-            f"Remaining time until timeout: {remaining_time:.3f} seconds"
-        )
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current_time = time.perf_counter()
+    execution_duration = current_time - start_time if start_time else 0
+    remaining_time = lambda_context.get_remaining_time_in_millis() / 1000 if lambda_context else 0
+    function_version = lambda_context.function_version if lambda_context else "unknown"
+    
+    await update.message.reply_text(
+        f"Bot is running!\n"
+        f"Function version: {function_version}\n"
+        f"Execution duration: {execution_duration:.3f} seconds\n"
+        f"Remaining time until timeout: {remaining_time:.3f} seconds"
+    )
 
 
 async def get_chat_history(chat_id):
@@ -467,6 +466,10 @@ async def save_thinking_status(chat_id, status):
         return False
 
 def lambda_handler(event, context):
+    global start_time, lambda_context
+    start_time = time.perf_counter()
+    lambda_context = context
+    
     # Check if secret token header exists and matches expected value
     if 'headers' not in event or \
        'X-Telegram-Bot-Api-Secret-Token' not in event['headers'] or \
@@ -557,11 +560,8 @@ async def get_current_datetime():
     return current.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 async def main(event, context):
-    # Create bot handler with Lambda context
-    bot_handler = BotHandler(context)
-
-    # Register command handler with the instance method that has access to lambda_context
-    application.add_handler(CommandHandler('status', bot_handler.status_command))
+    # Register command handlers
+    application.add_handler(CommandHandler('status', status_command))
 
     application.add_handler(CommandHandler('start', start_command))
 
