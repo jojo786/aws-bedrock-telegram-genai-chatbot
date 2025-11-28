@@ -8,6 +8,14 @@ import os
 from aws_lambda_powertools.utilities import parameters
 import time
 import re
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+bot = FastAPI()
+
+@bot.get("/")
+def health_check():
+    return {"status": "healthy", "message": "Telegram bot is running"}
 
 
 # Initialize SSM client
@@ -99,6 +107,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a GenAI chatbot, powered by Amazon Bedrock, running on AWS Serverless, please talk to me!")
 
 async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print(update)
     messages = []
     
     chat_id = update.effective_chat.id
@@ -465,22 +474,7 @@ async def save_thinking_status(chat_id, status):
         print(f"Error saving thinking status: {e}")
         return False
 
-def lambda_handler(event, context):
-    global start_time, lambda_context
-    start_time = time.perf_counter()
-    lambda_context = context
-    
-    # Check if secret token header exists and matches expected value
-    if 'headers' not in event or \
-       'X-Telegram-Bot-Api-Secret-Token' not in event['headers'] or \
-       event['headers']['X-Telegram-Bot-Api-Secret-Token'] != TelegramBotAPISecretToken:
-        print("Unauthorized - Telegram API Secret Token Header not found")
-        return {
-            'statusCode': 401,
-            'body': 'Unauthorized'
-        }
-    
-    return asyncio.get_event_loop().run_until_complete(main(event, context))
+
 
 #clear chat history
 async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -559,6 +553,8 @@ async def get_current_datetime():
     current = datetime.utcnow()
     return current.strftime("%Y-%m-%d %H:%M:%S UTC")
 
+
+
 async def main(event, context):
     # Register command handlers
     application.add_handler(CommandHandler('status', status_command))
@@ -605,7 +601,44 @@ async def main(event, context):
         }
 
     except Exception as exc:
+        print("500 Exception")
         return {
             'statusCode': 500,
             'body': 'Failure'
         }
+
+@bot.post("/bot")
+async def webhook(request: Request):
+    global start_time, lambda_context
+    start_time = time.perf_counter()
+    
+    # Get headers
+    headers = dict(request.headers)
+    
+    # Check if secret token header exists and matches expected value
+    if 'x-telegram-bot-api-secret-token' not in headers or headers['x-telegram-bot-api-secret-token'] != TelegramBotAPISecretToken:
+        print("Unauthorized - Telegram API Secret Token Header not found")
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    # Get request body
+    body = await request.body()
+    
+    # Create mock event for compatibility with existing main function
+    event = {"body": body.decode('utf-8'), "headers": headers}
+    
+    # Create mock context
+    class MockContext:
+        def __init__(self):
+            self.function_version = "$LATEST"
+        def get_remaining_time_in_millis(self):
+            return 30000
+    
+    lambda_context = MockContext()
+    
+    result = await main(event, lambda_context)
+    
+    return JSONResponse(status_code=result.get('statusCode', 200), content={"message": result.get('body', 'Success')})
+
+def lambda_handler(event, context):
+    return event
+

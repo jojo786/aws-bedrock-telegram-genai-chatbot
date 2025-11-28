@@ -18,8 +18,11 @@ Globals:
     Tracing: Active
     Environment:
       Variables:
-        AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+        #AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
         REGION: !Ref AWS::Region
+        AWS_LAMBDA_EXEC_WRAPPER: /opt/bootstrap
+        PORT: 8080
+        AWS_LWA_INVOKE_MODE: RESPONSE_STREAM
 
 Resources:
   TelegramFunction:
@@ -29,7 +32,10 @@ Resources:
         - Stack ${AWS::StackName} Function ${ResourceName}
         - ResourceName: TelegramFunction
       CodeUri: src/Function
-      Handler: bot.lambda_handler
+      Handler: run.sh #required for the Lambda Web Adapter
+      Layers:
+        - !Sub arn:aws:lambda:${AWS::Region}:753240598075:layer:LambdaAdapterLayerArm64:25
+      #Handler: bot.lambda_handler
       MemorySize: 256
       Timeout: 30
       #AutoPublishAlias: SnapStart
@@ -46,15 +52,17 @@ Resources:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
               Resource: '*'
         - DynamoDBCrudPolicy:
             TableName: !Ref ChatHistory
       Events:
-        ApiPOST:
+        TelegramStreamingApi:
           Type: Api
           Properties:
-            Path: /
+            Path: /bot
             Method: POST
+            RestApiId: !Ref TelegramStreamingApi
       Environment:
         Variables:
           CHATHISTORY_TABLE_NAME: !Ref ChatHistory
@@ -100,7 +108,39 @@ Resources:
         - Value: aws-bedrock-telegram-genai-chatbot
           Key: app
 
+  TelegramStreamingApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+      TracingEnabled: true
+      DefinitionBody:
+        openapi: 3.0.1
+        info:
+          title: Telegram ChatBot Streaming API
+          version: 1.0.0
+        paths:
+          /bot:
+            post:
+              responses:
+                '200':
+                  description: Success
+                  content:
+                    application/json:
+                      schema:
+                        type: object
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                responseTransferMode: "STREAM"
+                uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2021-11-15/functions/${TelegramFunction.Arn}/response-streaming-invocations'
+                #uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TelegramFunction.Arn}/invocations'
 Outputs:
-  TelegramApiUrl:
+  TelegramStreamingApiUrl:
     Description: API Gateway endpoint URL
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+    Value: !Sub "https://${TelegramStreamingApi}.execute-api.${AWS::Region}.amazonaws.com/prod/"
