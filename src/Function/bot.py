@@ -6,9 +6,11 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 from datetime import datetime, timedelta
 import os
 from aws_lambda_powertools.utilities import parameters
+from aws_lambda_powertools import Logger
 import time
-import re
+import uuid
 from fastapi import FastAPI, Request
+import re
 from fastapi.responses import JSONResponse
 
 bot = FastAPI()
@@ -17,6 +19,9 @@ bot = FastAPI()
 def health_check():
     return {"status": "healthy", "message": "Telegram bot is running"}
 
+
+# Initialize Logger
+logger = Logger()
 
 # Initialize SSM client
 ssm = boto3.client('ssm')
@@ -106,93 +111,143 @@ async def save_message(chat_id, role, content):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="I'm a GenAI chatbot, powered by Amazon Bedrock, running on AWS Serverless, please talk to me!")
 
-async def bedrock_converse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(update)
-    messages = []
+async def bedrock_stream(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Processing message from chat_id: {update.effective_chat.id}, user: {update.effective_user.id}")
+    logger.debug(f"Full Telegram Update object: {update}")
     
     chat_id = update.effective_chat.id
     user_message = update.message.text
+    message_thread_id = update.message.message_thread_id
+
     current_time = await get_current_datetime()
-    #print(user_message)
 
     # Get recent chat history
     chat_history = await get_chat_history(chat_id)
    
-   # Save user message
+    # Save user message
     await save_message(chat_id, 'user', user_message)
     
-    # Build conversation context
-    conversation = ""
+    # Build conversation context in Claude format
+    messages = []
     for msg in reversed(chat_history):  # Oldest to newest
-        conversation = {
+        messages.append({
             "role": msg['role'],
-            "content": [{"text": msg['content']}]
-            }
-        #print(conversation)
-        messages.append(conversation)
+            "content": msg['content']
+        })
+        logger.debug(f"Added message: {msg['role']} - {msg['content'][:50]}...")
 
-    # Add current time context to the user message
-    message = {
+    # Add current user message
+    messages.append({
         "role": "user", 
-        "content": [
-            {"text": f"This is the current time, but you dont need to mention it in your response unless required: {current_time}\nUser message: {user_message}"}
-        ]
+        "content": f"This is the current time, but you dont need to mention it in your response unless required: {current_time}\nUser message: {user_message}"
+    })
+    
+    # Prepare request body for Claude streaming
+    request_body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 2048,
+        "temperature": temperature,
+        "messages": messages,
+        "system": system_prompts[0]["text"]
     }
     
-    messages.append(message)
-    #print(messages)
-
-    # Check thinking status
-    thinking_enabled = await get_thinking_status(chat_id)
-    print(f"Checking the thinking status before sending thinking messages: {thinking_enabled}")
+    # Generate unique draft ID for this conversation
+    draft_id = int(time.time() * 1000) % (2**31 - 1)  # Use timestamp as draft ID
     
-    # Build additional model fields based on thinking status
-    model_fields = {}
-    if thinking_enabled:
-        model_fields["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": 1024
-        }
+    # Send initial draft message
+    accumulated_text = "Thinking..."
+    try:
+        await context.bot.send_message_draft(
+            chat_id=chat_id,
+            draft_id=draft_id,
+            message_thread_id=message_thread_id,
+            text=accumulated_text
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send initial draft: {e}")
+        # Fallback to regular message if draft fails
+        await context.bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+            text="Processing your request..."
+        )
     
-    # Call Bedrock Converse API
-    response = bedrock.converse(
-        modelId=model_id,
-        messages=messages,
-        system=system_prompts,
-        inferenceConfig=inference_config,
-        additionalModelRequestFields=model_fields
-    )
-    print(response)
-    # Parse response
-    #response_body = json.loads(response['output'].read())
+    # Call Bedrock with streaming
+    try:
+        response = bedrock.invoke_model_with_response_stream(
+            modelId=model_id,
+            body=json.dumps(request_body)
+        )
+        
+        # Process streaming response
+        accumulated_text = ""
+        stream = response.get('body')
+        
+        if stream:
+            for event in stream:
+                chunk = event.get('chunk')
+                if chunk:
+                    message = json.loads(chunk.get("bytes").decode())
+                    
+                    if message['type'] == "content_block_delta":
+                        text_chunk = message['delta'].get('text', '')
+                        if text_chunk:
+                            accumulated_text += text_chunk
+                            
+                            # Update draft every few chunks to avoid rate limiting
+                            if len(accumulated_text) % 100 < len(text_chunk):
+                                try:
+                                    await context.bot.send_message_draft(
+                                        chat_id=chat_id,
+                                        draft_id=draft_id,
+                                        message_thread_id=message_thread_id,
+                                        text=accumulated_text
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"Draft update failed: {e}")
+                    
+                    elif message['type'] == "message_stop":
+                        logger.debug("Stream completed")
+                        break
+        
+        # Send final complete message
+        if accumulated_text:
+            ptb_response_message = await context.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=message_thread_id,
+                text=accumulated_text
+            )
+            
+            # Save bedrock response
+            await save_message(chat_id, 'assistant', accumulated_text)
+            
+            logger.debug(f"Final response sent: {len(accumulated_text)} characters")
+        else:
+            # Fallback if no content received
+            await context.bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=message_thread_id,
+                text="I apologize, but I couldn't generate a response. Please try again."
+            )
+            return
     
-    # Parse response - response is already a dictionary
-    content = response['output']['message']['content']
-    
-    # Extract reasoning and text content
-    reasoning = next((item['reasoningContent']['reasoningText']['text'] for item in content if 'reasoningContent' in item), "")
-    text_response = next((item['text'] for item in content if 'text' in item), "")
-    
-    # Combine reasoning and response
-    bedrock_response = f"**Thinking:**\n{reasoning}\n\n**Response:**\n{text_response}" if reasoning else text_response
-    
-    bedrock_response_metrics = response['metrics']['latencyMs']
-    bedrock_response_usage = response['usage']
-
-    # Save bedrock response
-    await save_message(chat_id, 'assistant', bedrock_response)
-
-    # Send response to telegram
-    ptb_response_message = await context.bot.send_message(chat_id=update.effective_chat.id, text=bedrock_response)
+    except Exception as e:
+        logger.error(f"Error in streaming: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+            text="Sorry, I encountered an error processing your request. Please try again."
+        )
+        return
 
     # Check debug status before sending debug message
-    debug_enabled = await get_debug_status(update.effective_chat.id)
-    print(f"Checking the debug status before sending debug messages: {debug_enabled}")
+    debug_enabled = await get_debug_status(chat_id)
+    logger.debug(f"Checking the debug status before sending debug messages: {debug_enabled}")
     if debug_enabled:
         await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
+            chat_id=chat_id, 
             reply_to_message_id=ptb_response_message.message_id, 
-            text=f"Debug: \n Bedrock Response time: {bedrock_response_metrics / 1000} sec \n Bedrock Usage: {bedrock_response_usage}"
+            text=f"Debug: Bedrock streaming response completed - {len(accumulated_text)} characters"
         )
     
 
@@ -214,7 +269,7 @@ def sanitize_filename(filename):
 
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("Start processing document: ")
+    logger.info("Start processing document")
     
     chat_id = update.effective_chat.id
     document = update.effective_message.document
@@ -228,17 +283,15 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check file size
     if file_size > SIZE_LIMIT:
         size_mb = file_size / (1024 * 1024)  # Convert to MB for user-friendly message
-        print("file too large")
+        logger.warning("File too large")
         # Send response to telegram
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"File is too large ({size_mb:.2f}MB). Maximum allowed size is 4.5MB. Please upload a smaller file."
-        )
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"File is too large ({size_mb:.2f}MB). Maximum allowed size is 4.5MB. Please upload a smaller file.")
         return
 
     
-    # Log document details
-    print(f"File name: {file_name}")
-    print(f"MIME type: {mime_type}")
-    print(f"File size: {file_size / (1024 * 1024):.2f}MB")
+    logger.debug(f"File name: {file_name}")
+    logger.debug(f"MIME type: {mime_type}")
+    logger.debug(f"File size: {file_size / (1024 * 1024):.2f}MB")
     
 
     
@@ -264,7 +317,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if document type is supported
     if mime_type not in supported_types:
-        print("Unsupported document type")
+        logger.warning("Unsupported document type")
         # Send response to telegram
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Sorry, this file type is not supported. Please upload a PDF, DOC, DOCX, or TXT file."
         )
@@ -283,11 +336,11 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(temp_file_path, 'rb') as doc:
             doc_contents = doc.read()
         
-        print(f"Successfully saved document as {file_type['type']}")
+        logger.info(f"Successfully saved document as {file_type['type']}")
 
                 # Sanitize the filename for Bedrock
         sanitized_name = sanitize_filename(file_name)
-        print(f"Sanitized filename: {sanitized_name}")
+        logger.debug(f"Sanitized filename: {sanitized_name}")
         
         # Ensure we have a valid filename after sanitization
         if not sanitized_name:
@@ -337,7 +390,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Check debug status before sending debug message
         debug_enabled = await get_debug_status(update.effective_chat.id)
-        print(f"Checking the debug status before sending debug messages: {debug_enabled}")
+        logger.debug(f"Checking the debug status before sending debug messages: {debug_enabled}")
         if debug_enabled:
             await context.bot.send_message(
                 chat_id=chat_id, 
@@ -347,7 +400,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     except Exception as e:
         error_message = f"Error processing document: {str(e)}"
-        print(error_message)
+        logger.error(error_message)
         await context.bot.send_message(chat_id=chat_id, text=error_message)
     
     finally:
@@ -412,10 +465,10 @@ async def get_debug_status(chat_id):
             Limit=1  # We only need the most recent setting
         )
         items = response.get('Items', [])
-        print(f"Debug items: {items}")  # Add logging for debugging
+        logger.debug(f"Debug items: {items}")
         return items[0].get('debug_enabled', False) if items else False
     except Exception as e:
-        print(f"Error getting debug status: {e}")
+        logger.error(f"Error getting debug status: {e}")
         return False
 
 async def save_debug_status(chat_id, status):
@@ -434,7 +487,7 @@ async def save_debug_status(chat_id, status):
         })
         return True
     except Exception as e:
-        print(f"Error saving debug status: {e}")
+        logger.error(f"Error saving debug status: {e}")
         return False
 
 async def get_thinking_status(chat_id):
@@ -450,10 +503,10 @@ async def get_thinking_status(chat_id):
             Limit=1
         )
         items = response.get('Items', [])
-        print(f"Thinking items: {items}")  # Add logging for thinking
+        logger.debug(f"Thinking items: {items}")
         return items[0].get('thinking_enabled', False) if items else False
     except Exception as e:
-        print(f"Error getting thinking status: {e}")
+        logger.error(f"Error getting thinking status: {e}")
         return False
 
 async def save_thinking_status(chat_id, status):
@@ -471,7 +524,7 @@ async def save_thinking_status(chat_id, status):
         })
         return True
     except Exception as e:
-        print(f"Error saving thinking status: {e}")
+        logger.error(f"Error saving thinking status: {e}")
         return False
 
 
@@ -542,7 +595,7 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     except Exception as e:
-        print(f"Error clearing chat history: {e}")
+        logger.error(f"Error clearing chat history: {e}")
         await context.bot.send_message(
             chat_id=chat_id,
             text="Sorry, I encountered an error while trying to clear your chat history."
@@ -561,7 +614,7 @@ async def main(event, context):
 
     application.add_handler(CommandHandler('start', start_command))
 
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_converse))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), bedrock_stream))
 
     #Add the debug toggle command handler
     application.add_handler(CommandHandler('debug', debug_handler))
@@ -601,7 +654,7 @@ async def main(event, context):
         }
 
     except Exception as exc:
-        print("500 Exception")
+        logger.error("500 Exception")
         return {
             'statusCode': 500,
             'body': 'Failure'
@@ -617,7 +670,7 @@ async def webhook(request: Request):
     
     # Check if secret token header exists and matches expected value
     if 'x-telegram-bot-api-secret-token' not in headers or headers['x-telegram-bot-api-secret-token'] != TelegramBotAPISecretToken:
-        print("Unauthorized - Telegram API Secret Token Header not found")
+        logger.warning("Unauthorized - Telegram API Secret Token Header not found")
         return JSONResponse(status_code=401, content={"error": "Unauthorized"})
 
     # Get request body

@@ -10,6 +10,8 @@ Globals:
     LoggingConfig:
       LogGroup: !Sub /aws/lambda/${AWS::StackName}
       LogFormat: JSON
+      ApplicationLogLevel: INFO
+      SystemLogLevel: INFO
     Layers:
       #- !Sub arn:aws:lambda:${AWS::Region}:580247275435:layer:LambdaInsightsExtension-Arm64:20 #Lambda Insights Layer - Specific for us-east-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Lambda-Insights-extension-versionsARM.html
       #- !Sub arn:aws:lambda:${AWS::Region}:615299751070:layer:AWSOpenTelemetryDistroPython:5 #Application Signals Layer - Specific for us-east-1 https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Signals-Enable-Lambda.html
@@ -67,6 +69,7 @@ Resources:
         Variables:
           CHATHISTORY_TABLE_NAME: !Ref ChatHistory
           CHATHISTORY_TABLE_ARN: !GetAtt ChatHistory.Arn
+          LOG_LEVEL: DEBUG
 
   TelegramFunctionLogGroup:
     Type: AWS::Logs::LogGroup
